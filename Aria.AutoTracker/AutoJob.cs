@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.InteropServices;
+using System.ServiceProcess;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -37,6 +39,7 @@ namespace Aria.AutoTracker
                 {
                     return;
                 }
+
                 IniDocument doc = new IniDocument();
                 if (!File.Exists(config.Path))
                 {
@@ -62,6 +65,7 @@ namespace Aria.AutoTracker
                     var txt = await client.DownloadStringTaskAsync(new Uri(item.Url));
                     if (!string.IsNullOrEmpty(txt))
                     {
+                        _log.LogInformation($"BT Tracker: 【{item.Name}】 download has been completed , {DateTime.Now:G}");
                         txt = Regex.Replace(txt, "\\s+", "|");
                         txtlist.Add(txt);
                     }
@@ -76,17 +80,46 @@ namespace Aria.AutoTracker
                         {
                             continue;
                         }
+
                         trackers.Add(line);
                         _log.LogInformation($"Add tracker: {line}");
                     }
                 }
+
                 var xtracker = string.Join(",", trackers);
                 doc.GlobalSection.AddKeyValue(key, xtracker);
                 File.Delete(config.Path);
                 await Task.Delay(1000);
                 await using var xfile = new FileStream(config.Path, FileMode.Create, FileAccess.ReadWrite);
                 doc.Write(xfile);
-                _log.LogInformation($"Aria2 config update finished , {DateTime.Now:G}...");
+                _log.LogInformation($"Aria2 config update finished , {DateTime.Now:G}");
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    var service = _config["ServiceName"];
+                    if (!string.IsNullOrEmpty(service))
+                    {
+                        var list = ServiceController.GetServices();
+                        foreach (var item in list)
+                        {
+                            if (!item.ServiceName.Equals(service, StringComparison.InvariantCultureIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            if (item.Status != ServiceControllerStatus.Stopped &&
+                                item.Status != ServiceControllerStatus.StopPending)
+                            {
+                                item.Stop();
+                                await Task.Delay(1000);
+                                _log.LogInformation($"Service: {service} has stopped running , {DateTime.Now:G}");
+                            }
+
+                            item.Start();
+                            await Task.Delay(1000);
+                            _log.LogInformation($"Service: {service} has started , {DateTime.Now:G}");
+                        }
+                    }
+                }
             }
             catch (Exception e)
             {
